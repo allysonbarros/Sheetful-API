@@ -25,8 +25,6 @@ sheetful-python/
 │   ├── api/               # API routes
 │   └── services/          # Business logic services
 ├── main.py                # Application entry point
-├── dev_utils.py           # Development utilities
-├── DEVELOPMENT_GUIDE.md   # Comprehensive development guide
 └── Makefile               # Common development commands
 ```
 
