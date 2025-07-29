@@ -198,19 +198,6 @@ console.log(data);
 
 ## Development
 
-### Project Structure
-
-```
-sheetful-python/
-├── main.py              # FastAPI application
-├── models.py            # Pydantic models
-├── sheets_service.py    # Google Sheets service
-├── config.py           # Configuration
-├── requirements.txt    # Dependencies
-├── .env.example        # Environment variables example
-└── README.md           # This file
-```
-
 ### Running Tests
 
 ```bash
