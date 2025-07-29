@@ -2,7 +2,7 @@
 
 A FastAPI-based REST API for interacting with Google Sheets, providing the easiest way to turn your Google Sheet into a RESTful API.
 
-## Features
+## ✨ Features
 
 - **RESTful API**: Full CRUD operations on Google Sheets
 - **Authentication**: Support for OAuth2 access tokens and API keys
@@ -11,42 +11,79 @@ A FastAPI-based REST API for interacting with Google Sheets, providing the easie
 - **Bulk operations**: Create and update multiple rows at once
 - **FastAPI**: Modern, fast web framework with automatic API documentation
 - **Type safety**: Full type hints and Pydantic models
+- **Well-organized**: Clean, modular code structure for easy maintenance
+- **Development tools**: Comprehensive development utilities and documentation
 
-## Installation
+## 📁 Project Structure
 
-1. Clone the repository:
-```bash
-git clone https://github.com/allysonbarros/Sheetful-API.git
-cd Sheetful-API
+```
+sheetful-python/
+├── app/                    # Main application package
+│   ├── main.py            # FastAPI application setup
+│   ├── config.py          # Configuration management
+│   ├── models.py          # Pydantic models
+│   ├── api/               # API routes
+│   └── services/          # Business logic services
+├── main.py                # Application entry point
+├── dev_utils.py           # Development utilities
+├── DEVELOPMENT_GUIDE.md   # Comprehensive development guide
+└── Makefile               # Common development commands
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+## 🚀 Quick Start
 
-3. Set up environment variables:
+### Using Make (Recommended)
+
 ```bash
+# Setup everything at once
+make setup
+
+# Activate virtual environment
+source .venv/bin/activate
+
+# Configure environment variables
 cp .env.example .env
+# Edit .env with your Google API credentials
+
+# Run development server
+make dev
 ```
 
-Edit `.env` and add your Google API credentials:
-```env
-GOOGLE_API_KEY=your_google_api_key
-PORT=8000
-```
+### Manual Setup
 
-## Usage
+1. **Clone and setup:**
+   ```bash
+   git clone https://github.com/allysonbarros/Sheetful-API.git
+   cd Sheetful-API
+   python -m venv .venv
+   source .venv/bin/activate  # Windows: .venv\Scripts\activate
+   ```
 
-### Start the server
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your Google API credentials
+   ```
+
+4. **Run the application:**
+   ```bash
+   python main.py
+   ```
+
+### Using Docker
 
 ```bash
-python main.py
-```
+# Using docker-compose (recommended)
+docker-compose up -d
 
-Or with uvicorn:
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# Or build and run manually
+docker build -t sheetful-api .
+docker run -p 8000:8000 --env-file .env sheetful-api
 ```
 
 ### API Documentation
