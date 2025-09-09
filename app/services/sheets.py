@@ -163,6 +163,95 @@ class GoogleSheetsService:
                 detail=f"Sheet '{sheet_id}' not found: {str(e)}"
             )
     
+    def _get_safe_headers(self, worksheet) -> List[str]:
+        """
+        Get headers from worksheet, handling duplicates and empty values.
+        
+        Args:
+            worksheet: Google Sheets worksheet object
+            
+        Returns:
+            List of cleaned header names
+        """
+        try:
+            headers = worksheet.row_values(1) if worksheet.row_count > 0 else []
+            cleaned_headers = []
+            seen_headers = set()
+            
+            for i, header in enumerate(headers):
+                # Clean the header
+                clean_header = str(header).strip()
+                
+                # Handle empty headers
+                if not clean_header:
+                    clean_header = f"Column_{i + 1}"
+                
+                # Handle duplicates
+                original_header = clean_header
+                counter = 1
+                while clean_header in seen_headers:
+                    clean_header = f"{original_header}_{counter}"
+                    counter += 1
+                
+                cleaned_headers.append(clean_header)
+                seen_headers.add(clean_header)
+            
+            return cleaned_headers
+            
+        except Exception as e:
+            logger.error(f"Error getting headers: {str(e)}")
+            return []
+    
+    def _get_all_records_safe(self, worksheet) -> List[Dict[str, Any]]:
+        """
+        Safely get all records from worksheet, handling header issues.
+        
+        Args:
+            worksheet: Google Sheets worksheet object
+            
+        Returns:
+            List of row dictionaries with cleaned headers
+        """
+        try:
+            # First try the normal method
+            return worksheet.get_all_records()
+        except Exception as e:
+            logger.warning(f"Standard get_all_records failed: {str(e)}")
+            logger.info("Attempting to retrieve data with custom header handling")
+            
+            try:
+                # Get cleaned headers
+                headers = self._get_safe_headers(worksheet)
+                
+                if not headers:
+                    logger.warning("No headers found, returning empty list")
+                    return []
+                
+                # Get all values and skip the header row
+                all_values = worksheet.get_all_values()
+                if len(all_values) <= 1:
+                    logger.info("No data rows found")
+                    return []
+                
+                # Convert to list of dictionaries using cleaned headers
+                records = []
+                for row_values in all_values[1:]:  # Skip header row
+                    record = {}
+                    for i, value in enumerate(row_values):
+                        if i < len(headers):
+                            record[headers[i]] = value
+                        else:
+                            # Handle rows with more columns than headers
+                            record[f"Column_{i + 1}"] = value
+                    records.append(record)
+                
+                logger.info(f"Successfully retrieved {len(records)} records with custom header handling")
+                return records
+                
+            except Exception as fallback_error:
+                logger.error(f"Fallback method also failed: {str(fallback_error)}")
+                raise fallback_error
+
     async def get_sheet_rows(
         self, 
         worksheet, 
@@ -187,8 +276,8 @@ class GoogleSheetsService:
         try:
             logger.debug(f"Getting rows with offset={options.offset}, limit={options.limit}")
             
-            # Get all records as dictionaries
-            all_records = worksheet.get_all_records()
+            # Get all records as dictionaries using safe method
+            all_records = self._get_all_records_safe(worksheet)
             logger.debug(f"Retrieved {len(all_records)} total records")
             
             # Apply query filters if provided
@@ -256,7 +345,7 @@ class GoogleSheetsService:
                 "sheetId": worksheet.id,
                 "title": worksheet.title,
                 "index": worksheet.index,
-                "headerValues": worksheet.row_values(1) if worksheet.row_count > 0 else [],
+                "headerValues": self._get_safe_headers(worksheet),
                 "rowCount": worksheet.row_count,
                 "columnCount": worksheet.col_count,
                 "sheetType": "GRID",
@@ -291,7 +380,7 @@ class GoogleSheetsService:
         try:
             logger.debug(f"Getting row {row_id} from {worksheet.title}")
             
-            all_records = worksheet.get_all_records()
+            all_records = self._get_all_records_safe(worksheet)
             if row_id >= len(all_records) or row_id < 0:
                 raise HTTPException(
                     status_code=404,
@@ -328,7 +417,7 @@ class GoogleSheetsService:
             logger.debug(f"Updating row {row_id} in {worksheet.title}")
             
             # Verify row exists first
-            all_records = worksheet.get_all_records()
+            all_records = self._get_all_records_safe(worksheet)
             if row_id >= len(all_records) or row_id < 0:
                 raise HTTPException(
                     status_code=404,
@@ -337,7 +426,7 @@ class GoogleSheetsService:
             
             # Calculate actual row number (1-indexed, +1 for header)
             actual_row_number = row_id + 2
-            headers = worksheet.row_values(1)
+            headers = self._get_safe_headers(worksheet)
             
             # Update each cell in the row
             for i, header in enumerate(headers):
@@ -375,7 +464,7 @@ class GoogleSheetsService:
         try:
             logger.debug(f"Creating new row in {worksheet.title}")
             
-            headers = worksheet.row_values(1)
+            headers = self._get_safe_headers(worksheet)
             
             # Prepare row data in the correct column order
             row_data = [data.get(header, "") for header in headers]
@@ -386,7 +475,7 @@ class GoogleSheetsService:
             logger.info(f"Created new row in {worksheet.title}")
             
             # Return the created row (get the last row)
-            all_records = worksheet.get_all_records()
+            all_records = self._get_all_records_safe(worksheet)
             return all_records[-1] if all_records else {}
             
         except Exception as e:
@@ -414,7 +503,7 @@ class GoogleSheetsService:
         try:
             logger.debug(f"Bulk updating {len(data)} rows starting from {start_row_id}")
             
-            headers = worksheet.row_values(1)
+            headers = self._get_safe_headers(worksheet)
             
             for i, row_data in enumerate(data):
                 actual_row_number = start_row_id + i + 2  # +1 for 1-indexing, +1 for header
@@ -451,7 +540,7 @@ class GoogleSheetsService:
         try:
             logger.debug(f"Bulk creating {len(data)} rows")
             
-            headers = worksheet.row_values(1)
+            headers = self._get_safe_headers(worksheet)
             
             # Prepare all rows data in correct column order
             rows_data = []

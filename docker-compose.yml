@@ -4,7 +4,7 @@ services:
   sheetful-api:
     build: .
     ports:
-      - "8000:8000"
+      - "3001:8000"
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - PORT=8000
