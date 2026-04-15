@@ -9,7 +9,7 @@ an ``error_id`` and returns a generic 500 (spec 0005).
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, Header, Path, Query
+from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request
 
 from app.api.utils import get_worksheet_from_ids, log_request, log_success
 from app.models import BulkOperationResponse, SheetGetRowsOptions
@@ -20,8 +20,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _parse_filter_params(request: Request) -> Optional[Dict[str, str]]:
+    """
+    Extract ``filter[<column>]=<value>`` pairs from a request's query string.
+
+    Returns ``None`` if no filters are present so ``SheetGetRowsOptions.query``
+    stays unset and the fast pagination path is used (spec 0003).
+    """
+    filters: Dict[str, str] = {}
+    for key, value in request.query_params.multi_items():
+        if key.startswith("filter[") and key.endswith("]"):
+            column = key[len("filter[") : -1]
+            if column:
+                filters[column] = value
+    return filters or None
+
+
 @router.get("/{document_id}/{sheet_id}", response_model=List[Dict[str, Any]])
 async def get_rows(
+    request: Request,
     document_id: str = Path(..., description="Google Spreadsheet document ID"),
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
     x_google_access_token: Optional[str] = Header(
@@ -33,13 +50,27 @@ async def get_rows(
     ),
     svc: GoogleSheetsService = Depends(get_sheets_service),
 ) -> List[Dict[str, Any]]:
-    """Return rows from a sheet with offset/limit pagination."""
-    log_request("GET", document_id, sheet_id, offset=offset, limit=limit)
+    """
+    Return rows from a sheet with offset/limit pagination.
+
+    Optional column filters can be passed as ``filter[<column>]=<value>``
+    query params (AND across multiple keys, exact string match). When any
+    filter is present, the server falls back to an in-memory filtering pass.
+    """
+    filters = _parse_filter_params(request)
+    log_request(
+        "GET",
+        document_id,
+        sheet_id,
+        offset=offset,
+        limit=limit,
+        filters=filters,
+    )
 
     document, worksheet = await get_worksheet_from_ids(
         svc, document_id, sheet_id, x_google_access_token
     )
-    options = SheetGetRowsOptions(offset=offset, limit=limit)
+    options = SheetGetRowsOptions(offset=offset, limit=limit, query=filters)
     rows = await svc.get_sheet_rows(worksheet, options)
 
     log_success(f"Retrieved {len(rows)} rows", document.title, worksheet.title)

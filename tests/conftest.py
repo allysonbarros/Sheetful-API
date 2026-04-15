@@ -77,7 +77,16 @@ def mock_service(mock_document: MagicMock, mock_worksheet: MagicMock) -> MagicMo
         return mock_worksheet
 
     async def get_sheet_rows(worksheet, options):
-        return mock_worksheet.get_all_records.return_value
+        # Remember the options so tests can inspect what the handler passed.
+        svc.last_options = options
+        records = list(mock_worksheet.get_all_records.return_value)
+        if options.query:
+            records = [
+                r
+                for r in records
+                if all(str(r.get(k, "")) == str(v) for k, v in options.query.items())
+            ]
+        return records[options.offset : options.offset + options.limit]
 
     async def get_sheet_info(worksheet):
         return {

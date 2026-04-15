@@ -66,6 +66,35 @@ def test_unhandled_exception_is_redacted(api_client, mock_service) -> None:
     assert "error_id" in body
 
 
+def test_get_rows_without_filter_leaves_query_none(api_client, mock_service) -> None:
+    api_client.get("/doc/0")
+    assert mock_service.last_options.query is None
+
+
+def test_get_rows_with_single_filter(api_client, mock_service) -> None:
+    response = api_client.get("/doc/0?filter[name]=Bob")
+    assert response.status_code == 200
+    assert mock_service.last_options.query == {"name": "Bob"}
+    assert [r["name"] for r in response.json()] == ["Bob"]
+
+
+def test_get_rows_with_multiple_filters_is_anded(api_client, mock_service, mock_worksheet) -> None:
+    mock_worksheet.get_all_records.return_value = [
+        {"name": "Alice", "role": "x"},
+        {"name": "Bob", "role": "y"},
+        {"name": "Carol", "role": "x"},
+    ]
+    response = api_client.get("/doc/0?filter[role]=x&filter[name]=Alice")
+    assert response.status_code == 200
+    assert mock_service.last_options.query == {"role": "x", "name": "Alice"}
+    assert [r["name"] for r in response.json()] == ["Alice"]
+
+
+def test_get_rows_ignores_non_filter_params(api_client, mock_service) -> None:
+    api_client.get("/doc/0?offset=0&limit=10")
+    assert mock_service.last_options.query is None
+
+
 def test_http_exception_shape(api_client) -> None:
     # 404 from the service comes through the custom handler.
     response = api_client.get("/some-doc/0/9999")
