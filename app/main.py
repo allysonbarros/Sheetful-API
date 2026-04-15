@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health_router, sheets_router
+from app.api import errors, health_router, sheets_router
 from app.config import settings
 
 # Configure logging
@@ -45,15 +45,19 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json"
     )
     
-    # Add CORS middleware
+    # Add CORS middleware. ALLOWED_ORIGINS/ALLOW_CREDENTIALS are validated
+    # against each other by Settings (see spec 0005/0007).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
-        allow_credentials=True,
+        allow_credentials=settings.ALLOW_CREDENTIALS,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
+    # Centralized error handlers (spec 0005) — never leak raw exception text.
+    errors.register(app)
+
     # Include routers
     app.include_router(health_router, tags=["Health"])
     app.include_router(sheets_router, tags=["Sheets"])

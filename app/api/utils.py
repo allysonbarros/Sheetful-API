@@ -7,8 +7,6 @@ Common functionality shared across different route modules.
 import logging
 from typing import Optional
 
-from fastapi import HTTPException
-
 from app.services.sheets import GoogleSheetsService
 
 logger = logging.getLogger(__name__)
@@ -35,18 +33,12 @@ async def get_worksheet_from_ids(
     Raises:
         HTTPException: If document or sheet cannot be accessed.
     """
-    try:
-        document = await svc.get_document(document_id, access_token)
-        worksheet = await svc.get_sheet(document, sheet_id)
-        return document, worksheet
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting worksheet: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}",
-        )
+    # Let exceptions bubble up to the centralized handlers in
+    # app/api/errors.py — HTTPException already has the right shape and
+    # unexpected errors become redacted 500s with an error_id.
+    document = await svc.get_document(document_id, access_token)
+    worksheet = await svc.get_sheet(document, sheet_id)
+    return document, worksheet
 
 
 def log_request(endpoint: str, document_id: str, sheet_id: str, **kwargs) -> None:

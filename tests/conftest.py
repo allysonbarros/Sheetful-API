@@ -121,6 +121,8 @@ def api_client(mock_service: MagicMock):
 
     app.dependency_overrides[get_sheets_service] = lambda: mock_service
     try:
-        yield TestClient(app)
+        # raise_server_exceptions=False lets us assert on the error handler
+        # response for uncaught exceptions (spec 0005).
+        yield TestClient(app, raise_server_exceptions=False)
     finally:
         app.dependency_overrides.clear()

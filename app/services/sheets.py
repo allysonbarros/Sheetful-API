@@ -194,7 +194,7 @@ class GoogleSheetsService:
             logger.error(f"Error accessing document {document_id}: {str(e)}")
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot access Google document '{document_id}': {str(e)}",
+                detail=f"Cannot access Google document '{document_id}'",
             )
 
     def _get_sheet_sync(self, document, sheet_id: str):
@@ -229,7 +229,7 @@ class GoogleSheetsService:
             logger.error(f"Sheet not found '{sheet_id}': {str(e)}")
             raise HTTPException(
                 status_code=404,
-                detail=f"Sheet '{sheet_id}' not found: {str(e)}",
+                detail=f"Sheet '{sheet_id}' not found",
             )
 
     def _get_sheet_rows_sync(
@@ -254,7 +254,7 @@ class GoogleSheetsService:
             logger.error(f"Error retrieving sheet rows: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error retrieving sheet rows: {str(e)}",
+                detail="Error retrieving sheet rows",
             )
 
     def _get_sheet_rows_paginated(
@@ -342,7 +342,7 @@ class GoogleSheetsService:
             logger.error(f"Error getting sheet info: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error getting sheet info: {str(e)}",
+                detail="Error getting sheet info",
             )
 
     def _get_row_sync(self, worksheet, row_id: int) -> Dict[str, Any]:
@@ -363,7 +363,7 @@ class GoogleSheetsService:
             logger.error(f"Error retrieving row {row_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error retrieving row: {str(e)}",
+                detail="Error retrieving row",
             )
 
     def _update_row_sync(
@@ -406,7 +406,7 @@ class GoogleSheetsService:
             logger.error(f"Error updating row {row_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error updating row: {str(e)}",
+                detail="Error updating row",
             )
 
     def _create_row_sync(self, worksheet, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -427,7 +427,7 @@ class GoogleSheetsService:
             logger.error(f"Error creating row: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error creating row: {str(e)}",
+                detail="Error creating row",
             )
 
     def _update_rows_bulk_sync(
@@ -477,7 +477,7 @@ class GoogleSheetsService:
             logger.error(f"Error updating rows in bulk: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error updating rows in bulk: {str(e)}",
+                detail="Error updating rows in bulk",
             )
 
     def _create_rows_bulk_sync(
@@ -505,7 +505,7 @@ class GoogleSheetsService:
             logger.error(f"Error creating rows in bulk: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error creating rows in bulk: {str(e)}",
+                detail="Error creating rows in bulk",
             )
 
     # ------------------------------------------------------------------

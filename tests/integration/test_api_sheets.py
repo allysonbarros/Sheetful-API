@@ -47,3 +47,29 @@ def test_root_endpoint(api_client) -> None:
     assert response.status_code == 200
     body = response.json()
     assert "Sheetful API" in body["message"]
+
+
+def test_unhandled_exception_is_redacted(api_client, mock_service) -> None:
+    secret = "SECRET_TOKEN_DO_NOT_LEAK"
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError(secret)
+
+    mock_service.get_sheet_rows.side_effect = boom
+
+    response = api_client.get("/some-doc/0")
+    assert response.status_code == 500
+    body = response.json()
+    assert body["message"] == "Internal server error"
+    assert secret not in response.text
+    # An error_id is returned for log correlation.
+    assert "error_id" in body
+
+
+def test_http_exception_shape(api_client) -> None:
+    # 404 from the service comes through the custom handler.
+    response = api_client.get("/some-doc/0/9999")
+    assert response.status_code == 404
+    body = response.json()
+    assert body["status"] == 404
+    assert "message" in body
