@@ -25,6 +25,7 @@ Cada documento segue este formato:
 | 0008 | [Injetar `GoogleSheetsService` via `Depends`](0008-service-dependency-injection.md) | P2 | Não |
 | 0009 | [Abstrair a convenção de indexação de linhas](0009-row-index-abstraction.md) | P2 | Não |
 | 0010 | [Middleware de observabilidade](0010-observability-middleware.md) | P3 | Não |
+| 0011 | [Cache de clientes gspread e documentos por token](0011-gspread-client-and-document-caching.md) | P2 | Não |
 
 **Prioridades**: P0 = bloqueia produção, P1 = alto impacto, P2 = saúde do projeto, P3 = melhorias incrementais.
 
@@ -39,3 +40,8 @@ Cada documento segue este formato:
 - **0005** reusa `model_validator` — mais limpo depois de **0007**.
 - **0010** depende de **0005** (reusar `request_id` como `error_id`) e **0008** (injetar o service no `/ready`).
 - **0006** depende de **0003** (fallback em memória quando há `query`).
+- **0011** depende de **0001** (thread pool + `threading.Lock`), **0008** (DI para teste isolado) e interage com **0005** (invalidação antes do handler central).
+
+## Status de implementação
+
+Specs **0001–0010** estão implementadas na branch `claude/add-claude-documentation-P7okU`. **0011** é a única ainda pendente.
