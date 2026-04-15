@@ -228,21 +228,43 @@ async def test_create_row_does_not_reread_sheet(mock_worksheet) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_sheet_rows_applies_offset_and_limit(mock_worksheet) -> None:
+async def test_get_sheet_rows_fast_path_reads_only_requested_range(
+    mock_worksheet,
+) -> None:
     from app.models import SheetGetRowsOptions
 
-    mock_worksheet.get_all_records.return_value = [
-        {"name": f"u{i}"} for i in range(10)
+    mock_worksheet.row_values.return_value = ["name", "email"]
+    mock_worksheet.get.return_value = [
+        ["u3", "u3@x.com"],
+        ["u4", "u4@x.com"],
     ]
     svc = GoogleSheetsService()
     rows = await svc.get_sheet_rows(
         mock_worksheet, SheetGetRowsOptions(offset=3, limit=2)
     )
+    # Fast path: one read of the exact range A5:B6, no get_all_records.
+    mock_worksheet.get.assert_called_once_with("A5:B6")
+    mock_worksheet.get_all_records.assert_not_called()
     assert [r["name"] for r in rows] == ["u3", "u4"]
 
 
 @pytest.mark.asyncio
-async def test_get_sheet_rows_applies_query_filter(mock_worksheet) -> None:
+async def test_get_sheet_rows_fast_path_offset_zero(mock_worksheet) -> None:
+    from app.models import SheetGetRowsOptions
+
+    mock_worksheet.row_values.return_value = ["a", "b", "c"]  # 3 cols → col C
+    mock_worksheet.get.return_value = [["1", "2", "3"]]
+    svc = GoogleSheetsService()
+    await svc.get_sheet_rows(
+        mock_worksheet, SheetGetRowsOptions(offset=0, limit=100)
+    )
+    mock_worksheet.get.assert_called_once_with("A2:C101")
+
+
+@pytest.mark.asyncio
+async def test_get_sheet_rows_query_filter_uses_in_memory_fallback(
+    mock_worksheet,
+) -> None:
     from app.models import SheetGetRowsOptions
 
     mock_worksheet.get_all_records.return_value = [
@@ -254,4 +276,7 @@ async def test_get_sheet_rows_applies_query_filter(mock_worksheet) -> None:
     rows = await svc.get_sheet_rows(
         mock_worksheet, SheetGetRowsOptions(query={"role": "x"})
     )
+    # Slow path is used: get_all_records called, worksheet.get is not.
+    mock_worksheet.get_all_records.assert_called_once()
+    mock_worksheet.get.assert_not_called()
     assert [r["name"] for r in rows] == ["a", "c"]

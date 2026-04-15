@@ -242,19 +242,12 @@ class GoogleSheetsService:
                 f"Getting rows with offset={options.offset}, limit={options.limit}"
             )
 
-            all_records = self._get_all_records_safe(worksheet)
-            logger.debug(f"Retrieved {len(all_records)} total records")
-
+            # Query filters require the full dataset in memory because the
+            # Sheets API does not support server-side predicate filtering.
             if options.query:
-                all_records = self._apply_filters(all_records, options.query)
-                logger.debug(f"Filtered to {len(all_records)} records")
+                return self._get_sheet_rows_in_memory(worksheet, options)
 
-            start_index = options.offset
-            end_index = start_index + options.limit
-            paginated_records = all_records[start_index:end_index]
-
-            logger.debug(f"Returning {len(paginated_records)} records")
-            return paginated_records
+            return self._get_sheet_rows_paginated(worksheet, options)
         except HTTPException:
             raise
         except Exception as e:
@@ -263,6 +256,67 @@ class GoogleSheetsService:
                 status_code=500,
                 detail=f"Error retrieving sheet rows: {str(e)}",
             )
+
+    def _get_sheet_rows_paginated(
+        self,
+        worksheet,
+        options: SheetGetRowsOptions,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fast path: read only ``limit`` rows at ``offset`` via an A1 range.
+
+        Two API calls total (headers + range) regardless of sheet size.
+        """
+        headers = self._get_safe_headers(worksheet)
+        if not headers:
+            return []
+
+        sheet_start = _api_row_to_sheet_row(options.offset)
+        sheet_end = sheet_start + options.limit - 1
+        last_col = _col_index_to_letter(len(headers))
+        range_a1 = f"A{sheet_start}:{last_col}{sheet_end}"
+
+        raw_rows = worksheet.get(range_a1)
+
+        records: List[Dict[str, Any]] = []
+        for row_values in raw_rows:
+            record: Dict[str, Any] = {}
+            for i, value in enumerate(row_values):
+                if i < len(headers):
+                    record[headers[i]] = value
+                else:
+                    record[f"Column_{i + 1}"] = value
+            records.append(record)
+
+        logger.debug(
+            f"Returning {len(records)} records via range {range_a1}"
+        )
+        return records
+
+    def _get_sheet_rows_in_memory(
+        self,
+        worksheet,
+        options: SheetGetRowsOptions,
+    ) -> List[Dict[str, Any]]:
+        """
+        Slow path: materialize all rows, apply filters, then paginate.
+
+        Used when ``options.query`` is set, because Sheets has no
+        server-side filtering.
+        """
+        all_records = self._get_all_records_safe(worksheet)
+        logger.debug(f"Retrieved {len(all_records)} total records")
+
+        if options.query:
+            all_records = self._apply_filters(all_records, options.query)
+            logger.debug(f"Filtered to {len(all_records)} records")
+
+        start_index = options.offset
+        end_index = start_index + options.limit
+        paginated_records = all_records[start_index:end_index]
+
+        logger.debug(f"Returning {len(paginated_records)} records")
+        return paginated_records
 
     def _get_sheet_info_sync(self, worksheet) -> Dict[str, Any]:
         try:
