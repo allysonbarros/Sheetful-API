@@ -480,5 +480,13 @@ class GoogleSheetsService:
         )
 
 
-# Global service instance
+# Global service instance. Prefer the ``get_sheets_service`` factory below
+# (usable with ``fastapi.Depends``) so tests can override via
+# ``app.dependency_overrides``. Direct imports of ``sheets_service`` are kept
+# for backwards compatibility but should be avoided in new code.
 sheets_service = GoogleSheetsService()
+
+
+def get_sheets_service() -> GoogleSheetsService:
+    """FastAPI dependency returning the process-wide ``GoogleSheetsService``."""
+    return sheets_service
