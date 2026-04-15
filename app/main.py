@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import errors, health_router, sheets_router
+from app.api.middleware import RequestLoggingMiddleware
 from app.config import settings
 
 # Configure logging
@@ -54,6 +55,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Request logging + correlation ID (spec 0010). Must be added BEFORE
+    # exception handlers are wired so request.state.request_id is populated
+    # when an error is caught.
+    app.add_middleware(RequestLoggingMiddleware)
 
     # Centralized error handlers (spec 0005) — never leak raw exception text.
     errors.register(app)

@@ -95,6 +95,49 @@ def test_get_rows_ignores_non_filter_params(api_client, mock_service) -> None:
     assert mock_service.last_options.query is None
 
 
+def test_request_id_header_present_on_every_response(api_client) -> None:
+    response = api_client.get("/health")
+    assert "x-request-id" in response.headers
+    assert len(response.headers["x-request-id"]) > 0
+
+
+def test_client_supplied_request_id_is_reused(api_client) -> None:
+    response = api_client.get("/health", headers={"x-request-id": "my-id-42"})
+    assert response.headers["x-request-id"] == "my-id-42"
+
+
+def test_ready_returns_200_when_service_ping_succeeds(api_client, mock_service) -> None:
+    async def ping():
+        return None
+
+    mock_service.ping.side_effect = ping
+    response = api_client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_ready_returns_503_when_service_ping_fails(api_client, mock_service) -> None:
+    async def ping():
+        raise RuntimeError("google down")
+
+    mock_service.ping.side_effect = ping
+    response = api_client.get("/ready")
+    assert response.status_code == 503
+
+
+def test_unhandled_exception_error_id_matches_request_id(api_client, mock_service) -> None:
+    async def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    mock_service.get_sheet_rows.side_effect = boom
+    response = api_client.get(
+        "/doc/0", headers={"x-request-id": "correlation-id-xyz"}
+    )
+    assert response.status_code == 500
+    assert response.json()["error_id"] == "correlation-id-xyz"
+    assert response.headers["x-request-id"] == "correlation-id-xyz"
+
+
 def test_http_exception_shape(api_client) -> None:
     # 404 from the service comes through the custom handler.
     response = api_client.get("/some-doc/0/9999")

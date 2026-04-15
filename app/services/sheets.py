@@ -565,6 +565,16 @@ class GoogleSheetsService:
             self._create_rows_bulk_sync, worksheet, data
         )
 
+    async def ping(self) -> None:
+        """
+        Light connectivity check used by the readiness endpoint.
+
+        Exercises the auth path without depending on any specific document.
+        Raises if credentials are missing or the Google endpoint is
+        unreachable. Callers should convert exceptions into a 503.
+        """
+        await asyncio.to_thread(self._get_client, None)
+
 
 # Global service instance. Prefer the ``get_sheets_service`` factory below
 # (usable with ``fastapi.Depends``) so tests can override via

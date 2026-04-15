@@ -18,13 +18,25 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 
+def _request_id(request: Request) -> str:
+    """
+    Return the correlation ID for this request.
+
+    Prefer the one set by ``RequestLoggingMiddleware`` (spec 0010); fall
+    back to an inbound ``x-request-id`` header; finally mint a fresh UUID.
+    """
+    return (
+        getattr(request.state, "request_id", None)
+        or request.headers.get("x-request-id")
+        or str(uuid.uuid4())
+    )
+
+
 async def unhandled_exception_handler(
     request: Request, exc: Exception
 ) -> JSONResponse:
     """Catch-all: log the traceback, return a generic 500 with an error_id."""
-    # Reuse the request_id from RequestLoggingMiddleware when available
-    # (spec 0010); otherwise mint a new one.
-    error_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
+    error_id = _request_id(request)
     logger.exception(
         "Unhandled error [%s] on %s %s",
         error_id,
@@ -38,6 +50,7 @@ async def unhandled_exception_handler(
             "status": 500,
             "error_id": error_id,
         },
+        headers={"x-request-id": error_id},
     )
 
 
@@ -49,6 +62,7 @@ async def http_exception_handler(
     return JSONResponse(
         status_code=exc.status_code,
         content={"message": detail, "status": exc.status_code},
+        headers={"x-request-id": _request_id(request)},
     )
 
 
