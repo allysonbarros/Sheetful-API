@@ -3,6 +3,11 @@ Google Sheets service module.
 
 This module provides a service class for interacting with Google Sheets API,
 handling authentication, sheet operations, and error management.
+
+Row indexing convention: the API exposes 0-based indices that exclude the
+header row. Internal gspread calls use 1-based sheet coordinates. Always use
+``_api_row_to_sheet_row`` / ``_sheet_row_to_api_row`` to convert — never
+compute ``+2`` inline. See spec 0009.
 """
 
 import logging
@@ -18,6 +23,30 @@ from app.models import SheetGetRowsOptions
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
+
+# Row indexing: number of header rows at the top of every sheet we operate on.
+HEADER_ROW_COUNT = 1
+
+
+def _api_row_to_sheet_row(api_row_id: int) -> int:
+    """Convert a 0-based API row index to a 1-based sheet row number."""
+    return api_row_id + HEADER_ROW_COUNT + 1
+
+
+def _sheet_row_to_api_row(sheet_row: int) -> int:
+    """Convert a 1-based sheet row number to a 0-based API row index."""
+    return sheet_row - HEADER_ROW_COUNT - 1
+
+
+def _col_index_to_letter(col_index: int) -> str:
+    """Convert a 1-based column index to an A1 column letter (1→A, 27→AA)."""
+    if col_index < 1:
+        raise ValueError(f"Column index must be >= 1, got {col_index}")
+    result = ""
+    while col_index > 0:
+        col_index, remainder = divmod(col_index - 1, 26)
+        result = chr(ord("A") + remainder) + result
+    return result
 
 
 class GoogleSheetsAuthError(Exception):
@@ -424,8 +453,8 @@ class GoogleSheetsService:
                     detail=f"Row {row_id} not found"
                 )
             
-            # Calculate actual row number (1-indexed, +1 for header)
-            actual_row_number = row_id + 2
+            # Convert 0-based API index to 1-based sheet row number.
+            actual_row_number = _api_row_to_sheet_row(row_id)
             headers = self._get_safe_headers(worksheet)
             
             # Update each cell in the row
@@ -506,8 +535,8 @@ class GoogleSheetsService:
             headers = self._get_safe_headers(worksheet)
             
             for i, row_data in enumerate(data):
-                actual_row_number = start_row_id + i + 2  # +1 for 1-indexing, +1 for header
-                
+                actual_row_number = _api_row_to_sheet_row(start_row_id + i)
+
                 # Update each cell in the row
                 for j, header in enumerate(headers):
                     if header in row_data:
