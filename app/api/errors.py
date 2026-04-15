@@ -32,9 +32,7 @@ def _request_id(request: Request) -> str:
     )
 
 
-async def unhandled_exception_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all: log the traceback, return a generic 500 with an error_id."""
     error_id = _request_id(request)
     logger.exception(
@@ -54,9 +52,7 @@ async def unhandled_exception_handler(
     )
 
 
-async def http_exception_handler(
-    request: Request, exc: HTTPException
-) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """Render HTTPException as the documented error envelope."""
     detail = exc.detail if isinstance(exc.detail, str) else "Error"
     return JSONResponse(

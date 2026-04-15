@@ -33,22 +33,22 @@ run: ## Executa aplicação
 	uvicorn $(APP_MODULE) --host 0.0.0.0 --port 8000
 
 test: ## Executa testes
-	pytest
+	$(PYTHON) -m pytest
 
 test-cov: ## Executa testes com cobertura
-	pytest --cov=app --cov-report=html --cov-report=term
+	$(PYTHON) -m pytest --cov=app --cov-report=html --cov-report=term
 
 lint: ## Verifica código com linters
-	flake8 $(APP_PATHS)
-	mypy $(APP_PATHS)
+	$(PYTHON) -m flake8 $(APP_PATHS)
+	$(PYTHON) -m mypy $(APP_PATHS)
 
 format: ## Formata código
-	black $(APP_PATHS)
-	isort $(APP_PATHS)
+	$(PYTHON) -m black $(APP_PATHS)
+	$(PYTHON) -m isort $(APP_PATHS)
 
 format-check: ## Verifica formatação
-	black --check $(APP_PATHS)
-	isort --check-only $(APP_PATHS)
+	$(PYTHON) -m black --check $(APP_PATHS)
+	$(PYTHON) -m isort --check-only $(APP_PATHS)
 
 clean: ## Remove arquivos temporários
 	find . -type f -name "*.pyc" -delete

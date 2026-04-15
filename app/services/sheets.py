@@ -27,6 +27,11 @@ from google.oauth2.credentials import Credentials
 from app.config import settings
 from app.models import SheetGetRowsOptions
 
+# gspread ships without type stubs; use ``Any`` aliases so the service
+# surface stays annotatable without pulling in third-party stubs.
+Worksheet = Any
+Spreadsheet = Any
+
 # Configure logger for this module
 logger = logging.getLogger(__name__)
 
@@ -57,11 +62,13 @@ def _col_index_to_letter(col_index: int) -> str:
 
 class GoogleSheetsAuthError(Exception):
     """Custom exception for authentication errors."""
+
     pass
 
 
 class GoogleSheetsNotFoundError(Exception):
     """Custom exception for resource not found errors."""
+
     pass
 
 
@@ -102,7 +109,7 @@ class GoogleSheetsService:
                 detail="Authentication failed. Please check your credentials.",
             )
 
-    def _get_safe_headers(self, worksheet) -> List[str]:
+    def _get_safe_headers(self, worksheet: Worksheet) -> List[str]:
         """Return cleaned, deduplicated headers from row 1."""
         try:
             headers = worksheet.row_values(1) if worksheet.row_count > 0 else []
@@ -129,10 +136,11 @@ class GoogleSheetsService:
             logger.error(f"Error getting headers: {str(e)}")
             return []
 
-    def _get_all_records_safe(self, worksheet) -> List[Dict[str, Any]]:
+    def _get_all_records_safe(self, worksheet: Worksheet) -> List[Dict[str, Any]]:
         """Return all rows as dicts, falling back to raw values on header errors."""
         try:
-            return worksheet.get_all_records()
+            # gspread has no stubs; coerce to the documented list[dict] shape.
+            return list(worksheet.get_all_records())
         except Exception as e:
             logger.warning(f"Standard get_all_records failed: {str(e)}")
             logger.info("Attempting to retrieve data with custom header handling")
@@ -157,9 +165,7 @@ class GoogleSheetsService:
                         record[f"Column_{i + 1}"] = value
                 records.append(record)
 
-            logger.info(
-                f"Retrieved {len(records)} records via custom header handling"
-            )
+            logger.info(f"Retrieved {len(records)} records via custom header handling")
             return records
 
     def _apply_filters(
@@ -181,7 +187,9 @@ class GoogleSheetsService:
     # Sync cores for public operations
     # ------------------------------------------------------------------
 
-    def _get_document_sync(self, document_id: str, access_token: Optional[str] = None):
+    def _get_document_sync(
+        self, document_id: str, access_token: Optional[str] = None
+    ) -> Spreadsheet:
         try:
             logger.info(f"Accessing document: {document_id}")
             client = self._get_client(access_token)
@@ -197,7 +205,7 @@ class GoogleSheetsService:
                 detail=f"Cannot access Google document '{document_id}'",
             )
 
-    def _get_sheet_sync(self, document, sheet_id: str):
+    def _get_sheet_sync(self, document: Spreadsheet, sheet_id: str) -> Worksheet:
         try:
             logger.debug(f"Looking for sheet: {sheet_id}")
 
@@ -234,7 +242,7 @@ class GoogleSheetsService:
 
     def _get_sheet_rows_sync(
         self,
-        worksheet,
+        worksheet: Worksheet,
         options: SheetGetRowsOptions,
     ) -> List[Dict[str, Any]]:
         try:
@@ -259,7 +267,7 @@ class GoogleSheetsService:
 
     def _get_sheet_rows_paginated(
         self,
-        worksheet,
+        worksheet: Worksheet,
         options: SheetGetRowsOptions,
     ) -> List[Dict[str, Any]]:
         """
@@ -288,14 +296,12 @@ class GoogleSheetsService:
                     record[f"Column_{i + 1}"] = value
             records.append(record)
 
-        logger.debug(
-            f"Returning {len(records)} records via range {range_a1}"
-        )
+        logger.debug(f"Returning {len(records)} records via range {range_a1}")
         return records
 
     def _get_sheet_rows_in_memory(
         self,
-        worksheet,
+        worksheet: Worksheet,
         options: SheetGetRowsOptions,
     ) -> List[Dict[str, Any]]:
         """
@@ -318,7 +324,7 @@ class GoogleSheetsService:
         logger.debug(f"Returning {len(paginated_records)} records")
         return paginated_records
 
-    def _get_sheet_info_sync(self, worksheet) -> Dict[str, Any]:
+    def _get_sheet_info_sync(self, worksheet: Worksheet) -> Dict[str, Any]:
         try:
             logger.debug(f"Getting info for sheet: {worksheet.title}")
 
@@ -345,7 +351,7 @@ class GoogleSheetsService:
                 detail="Error getting sheet info",
             )
 
-    def _get_row_sync(self, worksheet, row_id: int) -> Dict[str, Any]:
+    def _get_row_sync(self, worksheet: Worksheet, row_id: int) -> Dict[str, Any]:
         try:
             logger.debug(f"Getting row {row_id} from {worksheet.title}")
 
@@ -367,7 +373,7 @@ class GoogleSheetsService:
             )
 
     def _update_row_sync(
-        self, worksheet, row_id: int, data: Dict[str, Any]
+        self, worksheet: Worksheet, row_id: int, data: Dict[str, Any]
     ) -> Dict[str, Any]:
         try:
             logger.debug(f"Updating row {row_id} in {worksheet.title}")
@@ -409,7 +415,9 @@ class GoogleSheetsService:
                 detail="Error updating row",
             )
 
-    def _create_row_sync(self, worksheet, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_row_sync(
+        self, worksheet: Worksheet, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         try:
             logger.debug(f"Creating new row in {worksheet.title}")
 
@@ -432,14 +440,12 @@ class GoogleSheetsService:
 
     def _update_rows_bulk_sync(
         self,
-        worksheet,
+        worksheet: Worksheet,
         start_row_id: int,
         data: List[Dict[str, Any]],
     ) -> int:
         try:
-            logger.debug(
-                f"Bulk updating {len(data)} rows starting from {start_row_id}"
-            )
+            logger.debug(f"Bulk updating {len(data)} rows starting from {start_row_id}")
 
             if not data:
                 return 0
@@ -462,7 +468,9 @@ class GoogleSheetsService:
             merged_rows: List[List[Any]] = []
             for i, patch in enumerate(data):
                 raw = existing_rows[i] if i < len(existing_rows) else []
-                current = {headers[j]: raw[j] for j in range(min(len(headers), len(raw)))}
+                current = {
+                    headers[j]: raw[j] for j in range(min(len(headers), len(raw)))
+                }
                 merged = {**current, **patch}
                 merged_rows.append([merged.get(h, "") for h in headers])
 
@@ -482,7 +490,7 @@ class GoogleSheetsService:
 
     def _create_rows_bulk_sync(
         self,
-        worksheet,
+        worksheet: Worksheet,
         data: List[Dict[str, Any]],
     ) -> int:
         try:
@@ -514,41 +522,41 @@ class GoogleSheetsService:
 
     async def get_document(
         self, document_id: str, access_token: Optional[str] = None
-    ):
+    ) -> Spreadsheet:
         return await asyncio.to_thread(
             self._get_document_sync, document_id, access_token
         )
 
-    async def get_sheet(self, document, sheet_id: str):
+    async def get_sheet(self, document: Spreadsheet, sheet_id: str) -> Worksheet:
         return await asyncio.to_thread(self._get_sheet_sync, document, sheet_id)
 
     async def get_sheet_rows(
         self,
-        worksheet,
+        worksheet: Worksheet,
         options: Optional[SheetGetRowsOptions] = None,
     ) -> List[Dict[str, Any]]:
         opts = options or SheetGetRowsOptions()
         return await asyncio.to_thread(self._get_sheet_rows_sync, worksheet, opts)
 
-    async def get_sheet_info(self, worksheet) -> Dict[str, Any]:
+    async def get_sheet_info(self, worksheet: Worksheet) -> Dict[str, Any]:
         return await asyncio.to_thread(self._get_sheet_info_sync, worksheet)
 
-    async def get_row(self, worksheet, row_id: int) -> Dict[str, Any]:
+    async def get_row(self, worksheet: Worksheet, row_id: int) -> Dict[str, Any]:
         return await asyncio.to_thread(self._get_row_sync, worksheet, row_id)
 
     async def update_row(
-        self, worksheet, row_id: int, data: Dict[str, Any]
+        self, worksheet: Worksheet, row_id: int, data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        return await asyncio.to_thread(
-            self._update_row_sync, worksheet, row_id, data
-        )
+        return await asyncio.to_thread(self._update_row_sync, worksheet, row_id, data)
 
-    async def create_row(self, worksheet, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_row(
+        self, worksheet: Worksheet, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         return await asyncio.to_thread(self._create_row_sync, worksheet, data)
 
     async def update_rows_bulk(
         self,
-        worksheet,
+        worksheet: Worksheet,
         start_row_id: int,
         data: List[Dict[str, Any]],
     ) -> int:
@@ -558,12 +566,10 @@ class GoogleSheetsService:
 
     async def create_rows_bulk(
         self,
-        worksheet,
+        worksheet: Worksheet,
         data: List[Dict[str, Any]],
     ) -> int:
-        return await asyncio.to_thread(
-            self._create_rows_bulk_sync, worksheet, data
-        )
+        return await asyncio.to_thread(self._create_rows_bulk_sync, worksheet, data)
 
     async def ping(self) -> None:
         """

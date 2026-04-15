@@ -21,7 +21,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=dict)
-async def root():
+async def root() -> dict:
     """Root endpoint providing basic API information."""
     return {
         "message": "Sheetful API - Turn your Google Sheet into a RESTful API",
@@ -32,7 +32,7 @@ async def root():
 
 
 @router.get("/health", response_model=HealthCheckResponse)
-async def health_check():
+async def health_check() -> HealthCheckResponse:
     """Liveness probe: returns 200 as long as the process is running."""
     return HealthCheckResponse(
         status="healthy",

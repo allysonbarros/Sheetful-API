@@ -67,5 +67,6 @@ def get_settings() -> Settings:
     return Settings()
 
 
-# Module-level instance preserved for existing imports (``from app.config import settings``).
+# Module-level instance preserved for existing callers that still do
+# ``from app.config import settings``.
 settings = get_settings()

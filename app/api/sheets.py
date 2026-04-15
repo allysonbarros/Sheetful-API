@@ -41,9 +41,7 @@ async def get_rows(
     request: Request,
     document_id: str = Path(..., description="Google Spreadsheet document ID"),
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
-    x_google_access_token: Optional[str] = Header(
-        None, alias="x-google-access-token"
-    ),
+    x_google_access_token: Optional[str] = Header(None, alias="x-google-access-token"),
     offset: int = Query(0, ge=0, description="Number of rows to skip"),
     limit: int = Query(
         100, ge=1, le=1000, description="Maximum number of rows to return"
@@ -81,9 +79,7 @@ async def get_rows(
 async def get_sheet_info(
     document_id: str = Path(..., description="Google Spreadsheet document ID"),
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
-    x_google_access_token: Optional[str] = Header(
-        None, alias="x-google-access-token"
-    ),
+    x_google_access_token: Optional[str] = Header(None, alias="x-google-access-token"),
     svc: GoogleSheetsService = Depends(get_sheets_service),
 ) -> Dict[str, Any]:
     """Return worksheet metadata (dimensions, headers, etc.)."""
@@ -103,9 +99,7 @@ async def get_row(
     document_id: str = Path(..., description="Google Spreadsheet document ID"),
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
     row_id: int = Path(..., ge=0, description="Row index (0-based)"),
-    x_google_access_token: Optional[str] = Header(
-        None, alias="x-google-access-token"
-    ),
+    x_google_access_token: Optional[str] = Header(None, alias="x-google-access-token"),
     svc: GoogleSheetsService = Depends(get_sheets_service),
 ) -> Dict[str, Any]:
     """Return a single row by its 0-based index."""
@@ -126,9 +120,7 @@ async def update_row(
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
     row_id: int = Path(..., ge=0, description="Row index (0-based)"),
     body: Dict[str, Any] = Body(..., description="Row data to update"),
-    x_google_access_token: Optional[str] = Header(
-        None, alias="x-google-access-token"
-    ),
+    x_google_access_token: Optional[str] = Header(None, alias="x-google-access-token"),
     svc: GoogleSheetsService = Depends(get_sheets_service),
 ) -> Dict[str, Any]:
     """Patch a row: unspecified fields are preserved."""
@@ -148,9 +140,7 @@ async def create_row(
     document_id: str = Path(..., description="Google Spreadsheet document ID"),
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
     body: Dict[str, Any] = Body(..., description="Row data to create"),
-    x_google_access_token: Optional[str] = Header(
-        None, alias="x-google-access-token"
-    ),
+    x_google_access_token: Optional[str] = Header(None, alias="x-google-access-token"),
     svc: GoogleSheetsService = Depends(get_sheets_service),
 ) -> Dict[str, Any]:
     """Append a new row to the end of the sheet."""
@@ -174,15 +164,11 @@ async def update_rows_bulk(
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
     row_id: int = Path(..., ge=0, description="Starting row index (0-based)"),
     body: List[Dict[str, Any]] = Body(..., description="Row data patches"),
-    x_google_access_token: Optional[str] = Header(
-        None, alias="x-google-access-token"
-    ),
+    x_google_access_token: Optional[str] = Header(None, alias="x-google-access-token"),
     svc: GoogleSheetsService = Depends(get_sheets_service),
 ) -> BulkOperationResponse:
     """Patch a contiguous block of rows starting at ``row_id``."""
-    log_request(
-        "BULK UPDATE", document_id, sheet_id, row_id=row_id, count=len(body)
-    )
+    log_request("BULK UPDATE", document_id, sheet_id, row_id=row_id, count=len(body))
 
     document, worksheet = await get_worksheet_from_ids(
         svc, document_id, sheet_id, x_google_access_token
@@ -201,16 +187,12 @@ async def update_rows_bulk(
     )
 
 
-@router.post(
-    "/{document_id}/{sheet_id}/bulk", response_model=BulkOperationResponse
-)
+@router.post("/{document_id}/{sheet_id}/bulk", response_model=BulkOperationResponse)
 async def create_rows_bulk(
     document_id: str = Path(..., description="Google Spreadsheet document ID"),
     sheet_id: str = Path(..., description="Sheet ID, index, or title"),
     body: List[Dict[str, Any]] = Body(..., description="Rows to create"),
-    x_google_access_token: Optional[str] = Header(
-        None, alias="x-google-access-token"
-    ),
+    x_google_access_token: Optional[str] = Header(None, alias="x-google-access-token"),
     svc: GoogleSheetsService = Depends(get_sheets_service),
 ) -> BulkOperationResponse:
     """Append multiple rows at once."""
@@ -221,9 +203,7 @@ async def create_rows_bulk(
     )
     created_count = await svc.create_rows_bulk(worksheet, body)
 
-    log_success(
-        f"Bulk created {created_count} rows", document.title, worksheet.title
-    )
+    log_success(f"Bulk created {created_count} rows", document.title, worksheet.title)
     return BulkOperationResponse(
         message=f"Successfully created {created_count} rows",
         affected_rows=created_count,

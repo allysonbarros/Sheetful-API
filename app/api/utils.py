@@ -5,7 +5,7 @@ Common functionality shared across different route modules.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional, Tuple
 
 from app.services.sheets import GoogleSheetsService
 
@@ -17,7 +17,7 @@ async def get_worksheet_from_ids(
     document_id: str,
     sheet_id: str,
     access_token: Optional[str] = None,
-):
+) -> Tuple[Any, Any]:
     """
     Helper function to get worksheet from document and sheet IDs.
 
@@ -41,7 +41,7 @@ async def get_worksheet_from_ids(
     return document, worksheet
 
 
-def log_request(endpoint: str, document_id: str, sheet_id: str, **kwargs) -> None:
+def log_request(endpoint: str, document_id: str, sheet_id: str, **kwargs: Any) -> None:
     """Log API request with consistent format."""
     params = ", ".join([f"{k}={v}" for k, v in kwargs.items() if v is not None])
     log_msg = f"{endpoint} /{document_id}/{sheet_id}"

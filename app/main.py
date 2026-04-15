@@ -17,7 +17,7 @@ from app.config import settings
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def create_app() -> FastAPI:
     """
     Create and configure the FastAPI application.
-    
+
     Returns:
         Configured FastAPI application instance
     """
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
         raise
-    
+
     # Create FastAPI app instance
     app = FastAPI(
         title=settings.API_TITLE,
@@ -43,9 +43,9 @@ def create_app() -> FastAPI:
         version=settings.API_VERSION,
         docs_url="/docs",
         redoc_url="/redoc",
-        openapi_url="/openapi.json"
+        openapi_url="/openapi.json",
     )
-    
+
     # Add CORS middleware. ALLOWED_ORIGINS/ALLOW_CREDENTIALS are validated
     # against each other by Settings (see spec 0005/0007).
     app.add_middleware(
@@ -67,9 +67,11 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health_router, tags=["Health"])
     app.include_router(sheets_router, tags=["Sheets"])
-    
-    logger.info(f"FastAPI application created - {settings.API_TITLE} v{settings.API_VERSION}")
-    
+
+    logger.info(
+        f"FastAPI application created - {settings.API_TITLE} v{settings.API_VERSION}"
+    )
+
     return app
 
 
