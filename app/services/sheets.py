@@ -325,15 +325,27 @@ class GoogleSheetsService:
                     detail=f"Row {row_id} not found",
                 )
 
-            actual_row_number = _api_row_to_sheet_row(row_id)
             headers = self._get_safe_headers(worksheet)
+            if not headers:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Sheet has no headers; cannot update row",
+                )
 
-            for i, header in enumerate(headers):
-                if header in data:
-                    worksheet.update_cell(actual_row_number, i + 1, data[header])
+            # Patch semantics: preserve fields not present in ``data``.
+            current = all_records[row_id]
+            merged = {**current, **data}
+            new_values = [merged.get(h, "") for h in headers]
+
+            sheet_row = _api_row_to_sheet_row(row_id)
+            last_col = _col_index_to_letter(len(headers))
+            range_a1 = f"A{sheet_row}:{last_col}{sheet_row}"
+
+            # Single write call instead of N update_cell calls.
+            worksheet.update(range_a1, [new_values])
 
             logger.info(f"Updated row {row_id} in {worksheet.title}")
-            return self._get_row_sync(worksheet, row_id)
+            return merged
         except HTTPException:
             raise
         except Exception as e:
@@ -350,11 +362,11 @@ class GoogleSheetsService:
             headers = self._get_safe_headers(worksheet)
             row_data = [data.get(header, "") for header in headers]
 
+            # Single call; do not re-read the whole sheet afterwards.
             worksheet.append_row(row_data)
             logger.info(f"Created new row in {worksheet.title}")
 
-            all_records = self._get_all_records_safe(worksheet)
-            return all_records[-1] if all_records else {}
+            return dict(zip(headers, row_data))
         except HTTPException:
             raise
         except Exception as e:
@@ -375,13 +387,33 @@ class GoogleSheetsService:
                 f"Bulk updating {len(data)} rows starting from {start_row_id}"
             )
 
-            headers = self._get_safe_headers(worksheet)
+            if not data:
+                return 0
 
-            for i, row_data in enumerate(data):
-                actual_row_number = _api_row_to_sheet_row(start_row_id + i)
-                for j, header in enumerate(headers):
-                    if header in row_data:
-                        worksheet.update_cell(actual_row_number, j + 1, row_data[header])
+            headers = self._get_safe_headers(worksheet)
+            if not headers:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Sheet has no headers; cannot update rows",
+                )
+
+            sheet_start = _api_row_to_sheet_row(start_row_id)
+            sheet_end = sheet_start + len(data) - 1
+            last_col = _col_index_to_letter(len(headers))
+            range_a1 = f"A{sheet_start}:{last_col}{sheet_end}"
+
+            # Read existing rows once to preserve fields not in the patches.
+            existing_rows = worksheet.get(range_a1)
+
+            merged_rows: List[List[Any]] = []
+            for i, patch in enumerate(data):
+                raw = existing_rows[i] if i < len(existing_rows) else []
+                current = {headers[j]: raw[j] for j in range(min(len(headers), len(raw)))}
+                merged = {**current, **patch}
+                merged_rows.append([merged.get(h, "") for h in headers])
+
+            # Single batched write for the entire block.
+            worksheet.update(range_a1, merged_rows)
 
             logger.info(f"Bulk updated {len(data)} rows in {worksheet.title}")
             return len(data)

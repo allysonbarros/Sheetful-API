@@ -150,19 +150,76 @@ async def test_get_row_out_of_range_raises_404(mock_worksheet) -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_row_uses_sheet_row_two_for_api_row_zero(mock_worksheet) -> None:
+async def test_update_row_writes_single_range_at_sheet_row_two(mock_worksheet) -> None:
     svc = GoogleSheetsService()
-    await svc.update_row(mock_worksheet, 0, {"name": "Renamed"})
-    # update_cell(row_number, col_number, value); col "name" is 1.
-    mock_worksheet.update_cell.assert_any_call(2, 1, "Renamed")
+    result = await svc.update_row(mock_worksheet, 0, {"name": "Renamed"})
+
+    # One batched write, not N update_cell calls.
+    mock_worksheet.update.assert_called_once_with(
+        "A2:B2", [["Renamed", "alice@example.com"]]
+    )
+    mock_worksheet.update_cell.assert_not_called()
+    # Patch semantics: unspecified columns preserved.
+    assert result == {"name": "Renamed", "email": "alice@example.com"}
 
 
 @pytest.mark.asyncio
-async def test_update_row_skips_columns_not_in_patch(mock_worksheet) -> None:
+async def test_update_row_preserves_columns_not_in_patch(mock_worksheet) -> None:
     svc = GoogleSheetsService()
-    await svc.update_row(mock_worksheet, 1, {"email": "new@example.com"})
-    # Only "email" (col 2) should be updated, at sheet row 3.
-    mock_worksheet.update_cell.assert_called_once_with(3, 2, "new@example.com")
+    result = await svc.update_row(mock_worksheet, 1, {"email": "new@example.com"})
+
+    mock_worksheet.update.assert_called_once_with(
+        "A3:B3", [["Bob", "new@example.com"]]
+    )
+    assert result["name"] == "Bob"
+
+
+@pytest.mark.asyncio
+async def test_update_rows_bulk_issues_two_calls_regardless_of_size(
+    mock_worksheet,
+) -> None:
+    mock_worksheet.get_all_records.return_value = [
+        {"name": f"u{i}", "email": f"u{i}@x.com"} for i in range(10)
+    ]
+    mock_worksheet.get.return_value = [
+        ["u0", "u0@x.com"],
+        ["u1", "u1@x.com"],
+        ["u2", "u2@x.com"],
+    ]
+    svc = GoogleSheetsService()
+    n = await svc.update_rows_bulk(
+        mock_worksheet,
+        start_row_id=0,
+        data=[
+            {"name": "A"},
+            {"email": "b@x.com"},
+            {"name": "C", "email": "c@x.com"},
+        ],
+    )
+    assert n == 3
+    # Exactly one read + one write, regardless of N × M.
+    mock_worksheet.get.assert_called_once_with("A2:B4")
+    mock_worksheet.update.assert_called_once_with(
+        "A2:B4",
+        [
+            ["A", "u0@x.com"],   # name patched, email preserved
+            ["u1", "b@x.com"],   # email patched, name preserved
+            ["C", "c@x.com"],    # both patched
+        ],
+    )
+    mock_worksheet.update_cell.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_row_does_not_reread_sheet(mock_worksheet) -> None:
+    svc = GoogleSheetsService()
+    mock_worksheet.get_all_records.reset_mock()
+    result = await svc.create_row(mock_worksheet, {"name": "Dave", "email": "d@x.com"})
+
+    mock_worksheet.append_row.assert_called_once_with(["Dave", "d@x.com"])
+    # Must not trigger another full read-back after the insert.
+    mock_worksheet.get_all_records.assert_not_called()
+    assert result == {"name": "Dave", "email": "d@x.com"}
 
 
 # ---------------------------------------------------------------------------
