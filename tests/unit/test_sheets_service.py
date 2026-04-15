@@ -1,0 +1,200 @@
+"""
+Unit tests for ``GoogleSheetsService`` — mock gspread, never hit the network.
+"""
+
+from __future__ import annotations
+
+import pytest
+from fastapi import HTTPException
+
+from app.services.sheets import (
+    GoogleSheetsService,
+    _api_row_to_sheet_row,
+    _col_index_to_letter,
+    _sheet_row_to_api_row,
+)
+
+# ``gspread`` is already imported by the app code under test, so this is a
+# cheap alias — but we avoid a direct ``import gspread`` in test modules so
+# any collection-time import error caused by broken transitive bindings
+# surfaces only when the app module is actually loaded.
+from app.services import sheets as _sheets_module  # noqa: E402
+
+gspread = _sheets_module.gspread  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Helper unit tests (spec 0009)
+# ---------------------------------------------------------------------------
+
+
+def test_api_row_to_sheet_row_adds_two_for_header_and_one_indexing() -> None:
+    assert _api_row_to_sheet_row(0) == 2
+    assert _api_row_to_sheet_row(5) == 7
+
+
+def test_sheet_row_round_trips() -> None:
+    for api in (0, 1, 99):
+        assert _sheet_row_to_api_row(_api_row_to_sheet_row(api)) == api
+
+
+@pytest.mark.parametrize(
+    "col_index, expected",
+    [
+        (1, "A"),
+        (2, "B"),
+        (26, "Z"),
+        (27, "AA"),
+        (28, "AB"),
+        (52, "AZ"),
+        (53, "BA"),
+        (702, "ZZ"),
+        (703, "AAA"),
+    ],
+)
+def test_col_index_to_letter(col_index: int, expected: str) -> None:
+    assert _col_index_to_letter(col_index) == expected
+
+
+def test_col_index_to_letter_rejects_zero() -> None:
+    with pytest.raises(ValueError):
+        _col_index_to_letter(0)
+
+
+# ---------------------------------------------------------------------------
+# Header handling
+# ---------------------------------------------------------------------------
+
+
+def test_get_safe_headers_dedupes_and_fills_blanks(mock_worksheet) -> None:
+    mock_worksheet.row_values.return_value = ["id", "", "name", "name"]
+    svc = GoogleSheetsService()
+    headers = svc._get_safe_headers(mock_worksheet)
+    assert headers == ["id", "Column_2", "name", "name_1"]
+
+
+def test_get_safe_headers_returns_empty_list_on_error(mock_worksheet) -> None:
+    mock_worksheet.row_values.side_effect = RuntimeError("boom")
+    svc = GoogleSheetsService()
+    assert svc._get_safe_headers(mock_worksheet) == []
+
+
+def test_get_all_records_safe_falls_back_when_get_all_records_throws(
+    mock_worksheet,
+) -> None:
+    mock_worksheet.get_all_records.side_effect = gspread.exceptions.GSpreadException(
+        "dup"
+    )
+    mock_worksheet.row_values.return_value = ["", "name"]
+    mock_worksheet.get_all_values.return_value = [
+        ["", "name"],
+        ["1", "Alice"],
+    ]
+    svc = GoogleSheetsService()
+    records = svc._get_all_records_safe(mock_worksheet)
+    assert records == [{"Column_1": "1", "name": "Alice"}]
+
+
+# ---------------------------------------------------------------------------
+# Sheet resolution (get_sheet)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_sheet_resolves_by_numeric_id_first(mock_document, mock_worksheet) -> None:
+    svc = GoogleSheetsService()
+    result = await svc.get_sheet(mock_document, "42")
+    mock_document.get_worksheet_by_id.assert_called_once_with(42)
+    assert result is mock_worksheet
+
+
+@pytest.mark.asyncio
+async def test_get_sheet_falls_back_to_index(mock_document, mock_worksheet) -> None:
+    mock_document.get_worksheet_by_id.side_effect = (
+        gspread.exceptions.WorksheetNotFound("nope")
+    )
+    svc = GoogleSheetsService()
+    result = await svc.get_sheet(mock_document, "0")
+    mock_document.get_worksheet.assert_called_once_with(0)
+    assert result is mock_worksheet
+
+
+@pytest.mark.asyncio
+async def test_get_sheet_falls_back_to_title(mock_document, mock_worksheet) -> None:
+    svc = GoogleSheetsService()
+    result = await svc.get_sheet(mock_document, "Customers")
+    mock_document.worksheet.assert_called_once_with("Customers")
+    assert result is mock_worksheet
+
+
+@pytest.mark.asyncio
+async def test_get_sheet_not_found_becomes_http_404(mock_document) -> None:
+    mock_document.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("no")
+    svc = GoogleSheetsService()
+    with pytest.raises(HTTPException) as exc:
+        await svc.get_sheet(mock_document, "MissingSheet")
+    assert exc.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Row operations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_row_out_of_range_raises_404(mock_worksheet) -> None:
+    svc = GoogleSheetsService()
+    with pytest.raises(HTTPException) as exc:
+        await svc.get_row(mock_worksheet, 999)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_row_uses_sheet_row_two_for_api_row_zero(mock_worksheet) -> None:
+    svc = GoogleSheetsService()
+    await svc.update_row(mock_worksheet, 0, {"name": "Renamed"})
+    # update_cell(row_number, col_number, value); col "name" is 1.
+    mock_worksheet.update_cell.assert_any_call(2, 1, "Renamed")
+
+
+@pytest.mark.asyncio
+async def test_update_row_skips_columns_not_in_patch(mock_worksheet) -> None:
+    svc = GoogleSheetsService()
+    await svc.update_row(mock_worksheet, 1, {"email": "new@example.com"})
+    # Only "email" (col 2) should be updated, at sheet row 3.
+    mock_worksheet.update_cell.assert_called_once_with(3, 2, "new@example.com")
+
+
+# ---------------------------------------------------------------------------
+# Pagination (in-memory fallback path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_sheet_rows_applies_offset_and_limit(mock_worksheet) -> None:
+    from app.models import SheetGetRowsOptions
+
+    mock_worksheet.get_all_records.return_value = [
+        {"name": f"u{i}"} for i in range(10)
+    ]
+    svc = GoogleSheetsService()
+    rows = await svc.get_sheet_rows(
+        mock_worksheet, SheetGetRowsOptions(offset=3, limit=2)
+    )
+    assert [r["name"] for r in rows] == ["u3", "u4"]
+
+
+@pytest.mark.asyncio
+async def test_get_sheet_rows_applies_query_filter(mock_worksheet) -> None:
+    from app.models import SheetGetRowsOptions
+
+    mock_worksheet.get_all_records.return_value = [
+        {"name": "a", "role": "x"},
+        {"name": "b", "role": "y"},
+        {"name": "c", "role": "x"},
+    ]
+    svc = GoogleSheetsService()
+    rows = await svc.get_sheet_rows(
+        mock_worksheet, SheetGetRowsOptions(query={"role": "x"})
+    )
+    assert [r["name"] for r in rows] == ["a", "c"]

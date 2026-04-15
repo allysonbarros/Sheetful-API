@@ -1,13 +1,14 @@
 # Makefile para Sheetful API
 # Comandos comuns para desenvolvimento e manutenção
 
-.PHONY: help install dev test lint format clean run docker-build docker-run
+.PHONY: help install dev test lint format clean run docker-build docker-run ci-test format-check test-cov
 
 # Configuração padrão
 PYTHON = python3
 PIP = pip
 VENV = .venv
 APP_MODULE = main:app
+APP_PATHS = app/ main.py
 
 help: ## Mostra esta ajuda
 	@echo "Comandos disponíveis:"
@@ -38,19 +39,16 @@ test-cov: ## Executa testes com cobertura
 	pytest --cov=app --cov-report=html --cov-report=term
 
 lint: ## Verifica código com linters
-	flake8 app/ main.py server.py dev_utils.py
-	mypy app/ main.py server.py dev_utils.py
+	flake8 $(APP_PATHS)
+	mypy $(APP_PATHS)
 
 format: ## Formata código
-	black app/ main.py server.py dev_utils.py
-	isort app/ main.py server.py dev_utils.py
+	black $(APP_PATHS)
+	isort $(APP_PATHS)
 
 format-check: ## Verifica formatação
-	black --check app/ main.py server.py dev_utils.py
-	isort --check-only app/ main.py server.py dev_utils.py
-
-validate: ## Valida configuração do ambiente
-	$(PYTHON) dev_utils.py validate
+	black --check $(APP_PATHS)
+	isort --check-only $(APP_PATHS)
 
 clean: ## Remove arquivos temporários
 	find . -type f -name "*.pyc" -delete
@@ -73,9 +71,6 @@ docker-compose-up: ## Executa com docker-compose
 
 docker-compose-down: ## Para containers docker-compose
 	docker-compose down
-
-logs: ## Mostra logs da aplicação
-	tail -f logs/django.log
 
 setup: venv install ## Configuração inicial completa
 	@echo "Configuração concluída!"
