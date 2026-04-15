@@ -8,14 +8,20 @@ Row indexing convention: the API exposes 0-based indices that exclude the
 header row. Internal gspread calls use 1-based sheet coordinates. Always use
 ``_api_row_to_sheet_row`` / ``_sheet_row_to_api_row`` to convert — never
 compute ``+2`` inline. See spec 0009.
+
+Concurrency: ``gspread`` is synchronous and blocking. Every public method on
+``GoogleSheetsService`` is ``async`` but delegates its body to a ``_*_sync``
+counterpart via ``asyncio.to_thread`` so it does not block the event loop.
+Never call gspread directly from an ``async def`` — always route through the
+sync core. See spec 0001.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
 import gspread
 from fastapi import HTTPException
-from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 
 from app.config import settings
@@ -62,38 +68,21 @@ class GoogleSheetsNotFoundError(Exception):
 class GoogleSheetsService:
     """
     Service for interacting with Google Sheets API.
-    
-    This service handles all Google Sheets operations including:
-    - Authentication (OAuth2 tokens and API keys)
-    - Document and worksheet access
-    - CRUD operations on sheet data
-    - Bulk operations for efficiency
-    
-    Example:
-        service = GoogleSheetsService()
-        document = await service.get_document("document_id", "access_token")
-        rows = await service.get_sheet_rows(worksheet, options)
+
+    Public methods are ``async`` thin wrappers; the real work happens in
+    ``_*_sync`` methods that are invoked via ``asyncio.to_thread``.
     """
-    
-    def __init__(self):
+
+    def __init__(self) -> None:
         """Initialize the Google Sheets service."""
-        self.gc = None
         logger.info("GoogleSheetsService initialized")
-    
+
+    # ------------------------------------------------------------------
+    # Internal sync helpers (never ``await`` anything)
+    # ------------------------------------------------------------------
+
     def _get_client(self, access_token: Optional[str] = None) -> gspread.Client:
-        """
-        Get authenticated Google Sheets client.
-        
-        Args:
-            access_token: OAuth2 access token (optional)
-            
-        Returns:
-            Authenticated gspread client
-            
-        Raises:
-            GoogleSheetsAuthError: If authentication fails
-            HTTPException: If no valid authentication method is available
-        """
+        """Return an authenticated gspread client."""
         try:
             if access_token:
                 logger.debug("Using OAuth2 access token for authentication")
@@ -104,245 +93,80 @@ class GoogleSheetsService:
                 return gspread.api_key(settings.GOOGLE_API_KEY)
             else:
                 raise GoogleSheetsAuthError("No valid authentication method available")
-                
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Authentication failed: {str(e)}")
             raise HTTPException(
                 status_code=401,
-                detail="Authentication failed. Please check your credentials."
+                detail="Authentication failed. Please check your credentials.",
             )
-    
-    async def get_document(self, document_id: str, access_token: Optional[str] = None):
-        """
-        Get Google Spreadsheet document.
-        
-        Args:
-            document_id: Google Spreadsheet document ID
-            access_token: OAuth2 access token (optional)
-            
-        Returns:
-            Google Spreadsheet document object
-            
-        Raises:
-            HTTPException: If document cannot be accessed
-        """
-        try:
-            logger.info(f"Accessing document: {document_id}")
-            client = self._get_client(access_token)
-            document = client.open_by_key(document_id)
-            logger.info(f"Successfully opened document: {document.title}")
-            return document
-            
-        except Exception as e:
-            logger.error(f"Error accessing document {document_id}: {str(e)}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot access Google document '{document_id}': {str(e)}"
-            )
-    
-    async def get_sheet(self, document, sheet_id: str):
-        """
-        Get specific worksheet from document.
-        
-        Tries multiple methods to find the sheet:
-        1. By numeric ID
-        2. By index
-        3. By title/name
-        
-        Args:
-            document: Google Spreadsheet document
-            sheet_id: Sheet identifier (ID, index, or title)
-            
-        Returns:
-            Worksheet object
-            
-        Raises:
-            HTTPException: If sheet is not found
-        """
-        try:
-            logger.debug(f"Looking for sheet: {sheet_id}")
-            
-            # Try to get sheet by numeric ID first
-            try:
-                sheet_id_int = int(sheet_id)
-                worksheet = document.get_worksheet_by_id(sheet_id_int)
-                logger.debug(f"Found sheet by ID: {worksheet.title}")
-                return worksheet
-            except (ValueError, gspread.exceptions.WorksheetNotFound):
-                pass
-            
-            # Try to get sheet by index
-            try:
-                sheet_index = int(sheet_id)
-                worksheet = document.get_worksheet(sheet_index)
-                logger.debug(f"Found sheet by index: {worksheet.title}")
-                return worksheet
-            except (ValueError, IndexError):
-                pass
-            
-            # Try to get sheet by title
-            worksheet = document.worksheet(sheet_id)
-            logger.debug(f"Found sheet by title: {worksheet.title}")
-            return worksheet
-            
-        except Exception as e:
-            logger.error(f"Sheet not found '{sheet_id}': {str(e)}")
-            raise HTTPException(
-                status_code=404,
-                detail=f"Sheet '{sheet_id}' not found: {str(e)}"
-            )
-    
+
     def _get_safe_headers(self, worksheet) -> List[str]:
-        """
-        Get headers from worksheet, handling duplicates and empty values.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            
-        Returns:
-            List of cleaned header names
-        """
+        """Return cleaned, deduplicated headers from row 1."""
         try:
             headers = worksheet.row_values(1) if worksheet.row_count > 0 else []
-            cleaned_headers = []
-            seen_headers = set()
-            
+            cleaned_headers: List[str] = []
+            seen_headers: set = set()
+
             for i, header in enumerate(headers):
-                # Clean the header
                 clean_header = str(header).strip()
-                
-                # Handle empty headers
+
                 if not clean_header:
                     clean_header = f"Column_{i + 1}"
-                
-                # Handle duplicates
+
                 original_header = clean_header
                 counter = 1
                 while clean_header in seen_headers:
                     clean_header = f"{original_header}_{counter}"
                     counter += 1
-                
+
                 cleaned_headers.append(clean_header)
                 seen_headers.add(clean_header)
-            
+
             return cleaned_headers
-            
         except Exception as e:
             logger.error(f"Error getting headers: {str(e)}")
             return []
-    
+
     def _get_all_records_safe(self, worksheet) -> List[Dict[str, Any]]:
-        """
-        Safely get all records from worksheet, handling header issues.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            
-        Returns:
-            List of row dictionaries with cleaned headers
-        """
+        """Return all rows as dicts, falling back to raw values on header errors."""
         try:
-            # First try the normal method
             return worksheet.get_all_records()
         except Exception as e:
             logger.warning(f"Standard get_all_records failed: {str(e)}")
             logger.info("Attempting to retrieve data with custom header handling")
-            
-            try:
-                # Get cleaned headers
-                headers = self._get_safe_headers(worksheet)
-                
-                if not headers:
-                    logger.warning("No headers found, returning empty list")
-                    return []
-                
-                # Get all values and skip the header row
-                all_values = worksheet.get_all_values()
-                if len(all_values) <= 1:
-                    logger.info("No data rows found")
-                    return []
-                
-                # Convert to list of dictionaries using cleaned headers
-                records = []
-                for row_values in all_values[1:]:  # Skip header row
-                    record = {}
-                    for i, value in enumerate(row_values):
-                        if i < len(headers):
-                            record[headers[i]] = value
-                        else:
-                            # Handle rows with more columns than headers
-                            record[f"Column_{i + 1}"] = value
-                    records.append(record)
-                
-                logger.info(f"Successfully retrieved {len(records)} records with custom header handling")
-                return records
-                
-            except Exception as fallback_error:
-                logger.error(f"Fallback method also failed: {str(fallback_error)}")
-                raise fallback_error
 
-    async def get_sheet_rows(
-        self, 
-        worksheet, 
-        options: Optional[SheetGetRowsOptions] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get rows from worksheet with filtering and pagination.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            options: Options for filtering and pagination
-            
-        Returns:
-            List of row dictionaries
-            
-        Raises:
-            HTTPException: If rows cannot be retrieved
-        """
-        if options is None:
-            options = SheetGetRowsOptions()
-        
-        try:
-            logger.debug(f"Getting rows with offset={options.offset}, limit={options.limit}")
-            
-            # Get all records as dictionaries using safe method
-            all_records = self._get_all_records_safe(worksheet)
-            logger.debug(f"Retrieved {len(all_records)} total records")
-            
-            # Apply query filters if provided
-            if options.query:
-                filtered_records = self._apply_filters(all_records, options.query)
-                logger.debug(f"Filtered to {len(filtered_records)} records")
-                all_records = filtered_records
-            
-            # Apply pagination
-            start_index = options.offset
-            end_index = start_index + options.limit
-            paginated_records = all_records[start_index:end_index]
-            
-            logger.debug(f"Returning {len(paginated_records)} records")
-            return paginated_records
-            
-        except Exception as e:
-            logger.error(f"Error retrieving sheet rows: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error retrieving sheet rows: {str(e)}"
+            headers = self._get_safe_headers(worksheet)
+            if not headers:
+                logger.warning("No headers found, returning empty list")
+                return []
+
+            all_values = worksheet.get_all_values()
+            if len(all_values) <= 1:
+                logger.info("No data rows found")
+                return []
+
+            records: List[Dict[str, Any]] = []
+            for row_values in all_values[1:]:
+                record: Dict[str, Any] = {}
+                for i, value in enumerate(row_values):
+                    if i < len(headers):
+                        record[headers[i]] = value
+                    else:
+                        record[f"Column_{i + 1}"] = value
+                records.append(record)
+
+            logger.info(
+                f"Retrieved {len(records)} records via custom header handling"
             )
-    
-    def _apply_filters(self, records: List[Dict[str, Any]], filters: Dict[str, str]) -> List[Dict[str, Any]]:
-        """
-        Apply query filters to records.
-        
-        Args:
-            records: List of record dictionaries
-            filters: Dictionary of field filters
-            
-        Returns:
-            Filtered list of records
-        """
-        filtered_records = []
-        
+            return records
+
+    def _apply_filters(
+        self, records: List[Dict[str, Any]], filters: Dict[str, str]
+    ) -> List[Dict[str, Any]]:
+        """Filter records by exact string match, AND across keys."""
+        filtered_records: List[Dict[str, Any]] = []
         for record in records:
             match = True
             for key, value in filters.items():
@@ -351,25 +175,99 @@ class GoogleSheetsService:
                     break
             if match:
                 filtered_records.append(record)
-                
         return filtered_records
-    
-    async def get_sheet_info(self, worksheet) -> Dict[str, Any]:
-        """
-        Get comprehensive information about a worksheet.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            
-        Returns:
-            Dictionary containing sheet metadata
-            
-        Raises:
-            HTTPException: If sheet info cannot be retrieved
-        """
+
+    # ------------------------------------------------------------------
+    # Sync cores for public operations
+    # ------------------------------------------------------------------
+
+    def _get_document_sync(self, document_id: str, access_token: Optional[str] = None):
+        try:
+            logger.info(f"Accessing document: {document_id}")
+            client = self._get_client(access_token)
+            document = client.open_by_key(document_id)
+            logger.info(f"Successfully opened document: {document.title}")
+            return document
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error accessing document {document_id}: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot access Google document '{document_id}': {str(e)}",
+            )
+
+    def _get_sheet_sync(self, document, sheet_id: str):
+        try:
+            logger.debug(f"Looking for sheet: {sheet_id}")
+
+            # Try numeric ID first
+            try:
+                sheet_id_int = int(sheet_id)
+                worksheet = document.get_worksheet_by_id(sheet_id_int)
+                logger.debug(f"Found sheet by ID: {worksheet.title}")
+                return worksheet
+            except (ValueError, gspread.exceptions.WorksheetNotFound):
+                pass
+
+            # Then by index
+            try:
+                sheet_index = int(sheet_id)
+                worksheet = document.get_worksheet(sheet_index)
+                logger.debug(f"Found sheet by index: {worksheet.title}")
+                return worksheet
+            except (ValueError, IndexError):
+                pass
+
+            # Finally by title
+            worksheet = document.worksheet(sheet_id)
+            logger.debug(f"Found sheet by title: {worksheet.title}")
+            return worksheet
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Sheet not found '{sheet_id}': {str(e)}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Sheet '{sheet_id}' not found: {str(e)}",
+            )
+
+    def _get_sheet_rows_sync(
+        self,
+        worksheet,
+        options: SheetGetRowsOptions,
+    ) -> List[Dict[str, Any]]:
+        try:
+            logger.debug(
+                f"Getting rows with offset={options.offset}, limit={options.limit}"
+            )
+
+            all_records = self._get_all_records_safe(worksheet)
+            logger.debug(f"Retrieved {len(all_records)} total records")
+
+            if options.query:
+                all_records = self._apply_filters(all_records, options.query)
+                logger.debug(f"Filtered to {len(all_records)} records")
+
+            start_index = options.offset
+            end_index = start_index + options.limit
+            paginated_records = all_records[start_index:end_index]
+
+            logger.debug(f"Returning {len(paginated_records)} records")
+            return paginated_records
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error retrieving sheet rows: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error retrieving sheet rows: {str(e)}",
+            )
+
+    def _get_sheet_info_sync(self, worksheet) -> Dict[str, Any]:
         try:
             logger.debug(f"Getting info for sheet: {worksheet.title}")
-            
+
             sheet_info = {
                 "sheetId": worksheet.id,
                 "title": worksheet.title,
@@ -379,216 +277,207 @@ class GoogleSheetsService:
                 "columnCount": worksheet.col_count,
                 "sheetType": "GRID",
                 "hidden": False,
-                "rightToLeft": False
+                "rightToLeft": False,
             }
-            
+
             logger.debug(f"Sheet info retrieved for: {worksheet.title}")
             return sheet_info
-            
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error getting sheet info: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error getting sheet info: {str(e)}"
+                detail=f"Error getting sheet info: {str(e)}",
             )
-    
-    async def get_row(self, worksheet, row_id: int) -> Dict[str, Any]:
-        """
-        Get a specific row from worksheet.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            row_id: Zero-based row index
-            
-        Returns:
-            Row data as dictionary
-            
-        Raises:
-            HTTPException: If row is not found or cannot be retrieved
-        """
+
+    def _get_row_sync(self, worksheet, row_id: int) -> Dict[str, Any]:
         try:
             logger.debug(f"Getting row {row_id} from {worksheet.title}")
-            
+
             all_records = self._get_all_records_safe(worksheet)
             if row_id >= len(all_records) or row_id < 0:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Row {row_id} not found"
+                    detail=f"Row {row_id} not found",
                 )
-            
+
             return all_records[row_id]
-            
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error retrieving row {row_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error retrieving row: {str(e)}"
+                detail=f"Error retrieving row: {str(e)}",
             )
-    
-    async def update_row(self, worksheet, row_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update a specific row in worksheet.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            row_id: Zero-based row index
-            data: New data for the row
-            
-        Returns:
-            Updated row data
-            
-        Raises:
-            HTTPException: If row cannot be updated
-        """
+
+    def _update_row_sync(
+        self, worksheet, row_id: int, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         try:
             logger.debug(f"Updating row {row_id} in {worksheet.title}")
-            
-            # Verify row exists first
+
             all_records = self._get_all_records_safe(worksheet)
             if row_id >= len(all_records) or row_id < 0:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Row {row_id} not found"
+                    detail=f"Row {row_id} not found",
                 )
-            
-            # Convert 0-based API index to 1-based sheet row number.
+
             actual_row_number = _api_row_to_sheet_row(row_id)
             headers = self._get_safe_headers(worksheet)
-            
-            # Update each cell in the row
+
             for i, header in enumerate(headers):
                 if header in data:
                     worksheet.update_cell(actual_row_number, i + 1, data[header])
-            
+
             logger.info(f"Updated row {row_id} in {worksheet.title}")
-            
-            # Return updated row
-            return await self.get_row(worksheet, row_id)
-            
+            return self._get_row_sync(worksheet, row_id)
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error updating row {row_id}: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error updating row: {str(e)}"
+                detail=f"Error updating row: {str(e)}",
             )
-    
-    async def create_row(self, worksheet, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create a new row in worksheet.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            data: Data for the new row
-            
-        Returns:
-            Created row data
-            
-        Raises:
-            HTTPException: If row cannot be created
-        """
+
+    def _create_row_sync(self, worksheet, data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             logger.debug(f"Creating new row in {worksheet.title}")
-            
+
             headers = self._get_safe_headers(worksheet)
-            
-            # Prepare row data in the correct column order
             row_data = [data.get(header, "") for header in headers]
-            
-            # Append the row
+
             worksheet.append_row(row_data)
-            
             logger.info(f"Created new row in {worksheet.title}")
-            
-            # Return the created row (get the last row)
+
             all_records = self._get_all_records_safe(worksheet)
             return all_records[-1] if all_records else {}
-            
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error creating row: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error creating row: {str(e)}"
+                detail=f"Error creating row: {str(e)}",
             )
-    
-    async def update_rows_bulk(self, worksheet, start_row_id: int, data: List[Dict[str, Any]]) -> int:
-        """
-        Update multiple rows in bulk.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            start_row_id: Starting row index (zero-based)
-            data: List of row data dictionaries
-            
-        Returns:
-            Number of rows updated
-            
-        Raises:
-            HTTPException: If bulk update fails
-        """
+
+    def _update_rows_bulk_sync(
+        self,
+        worksheet,
+        start_row_id: int,
+        data: List[Dict[str, Any]],
+    ) -> int:
         try:
-            logger.debug(f"Bulk updating {len(data)} rows starting from {start_row_id}")
-            
+            logger.debug(
+                f"Bulk updating {len(data)} rows starting from {start_row_id}"
+            )
+
             headers = self._get_safe_headers(worksheet)
-            
+
             for i, row_data in enumerate(data):
                 actual_row_number = _api_row_to_sheet_row(start_row_id + i)
-
-                # Update each cell in the row
                 for j, header in enumerate(headers):
                     if header in row_data:
                         worksheet.update_cell(actual_row_number, j + 1, row_data[header])
-            
+
             logger.info(f"Bulk updated {len(data)} rows in {worksheet.title}")
             return len(data)
-            
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error updating rows in bulk: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error updating rows in bulk: {str(e)}"
+                detail=f"Error updating rows in bulk: {str(e)}",
             )
-    
-    async def create_rows_bulk(self, worksheet, data: List[Dict[str, Any]]) -> int:
-        """
-        Create multiple rows in bulk.
-        
-        Args:
-            worksheet: Google Sheets worksheet object
-            data: List of row data dictionaries
-            
-        Returns:
-            Number of rows created
-            
-        Raises:
-            HTTPException: If bulk creation fails
-        """
+
+    def _create_rows_bulk_sync(
+        self,
+        worksheet,
+        data: List[Dict[str, Any]],
+    ) -> int:
         try:
             logger.debug(f"Bulk creating {len(data)} rows")
-            
+
             headers = self._get_safe_headers(worksheet)
-            
-            # Prepare all rows data in correct column order
-            rows_data = []
+
+            rows_data: List[List[Any]] = []
             for row_data in data:
                 row = [row_data.get(header, "") for header in headers]
                 rows_data.append(row)
-            
-            # Append all rows at once
+
             worksheet.append_rows(rows_data)
-            
+
             logger.info(f"Bulk created {len(data)} rows in {worksheet.title}")
             return len(data)
-            
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error creating rows in bulk: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error creating rows in bulk: {str(e)}"
+                detail=f"Error creating rows in bulk: {str(e)}",
             )
+
+    # ------------------------------------------------------------------
+    # Public async surface (thread-offload shells)
+    # ------------------------------------------------------------------
+
+    async def get_document(
+        self, document_id: str, access_token: Optional[str] = None
+    ):
+        return await asyncio.to_thread(
+            self._get_document_sync, document_id, access_token
+        )
+
+    async def get_sheet(self, document, sheet_id: str):
+        return await asyncio.to_thread(self._get_sheet_sync, document, sheet_id)
+
+    async def get_sheet_rows(
+        self,
+        worksheet,
+        options: Optional[SheetGetRowsOptions] = None,
+    ) -> List[Dict[str, Any]]:
+        opts = options or SheetGetRowsOptions()
+        return await asyncio.to_thread(self._get_sheet_rows_sync, worksheet, opts)
+
+    async def get_sheet_info(self, worksheet) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._get_sheet_info_sync, worksheet)
+
+    async def get_row(self, worksheet, row_id: int) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._get_row_sync, worksheet, row_id)
+
+    async def update_row(
+        self, worksheet, row_id: int, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self._update_row_sync, worksheet, row_id, data
+        )
+
+    async def create_row(self, worksheet, data: Dict[str, Any]) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._create_row_sync, worksheet, data)
+
+    async def update_rows_bulk(
+        self,
+        worksheet,
+        start_row_id: int,
+        data: List[Dict[str, Any]],
+    ) -> int:
+        return await asyncio.to_thread(
+            self._update_rows_bulk_sync, worksheet, start_row_id, data
+        )
+
+    async def create_rows_bulk(
+        self,
+        worksheet,
+        data: List[Dict[str, Any]],
+    ) -> int:
+        return await asyncio.to_thread(
+            self._create_rows_bulk_sync, worksheet, data
+        )
 
 
 # Global service instance
